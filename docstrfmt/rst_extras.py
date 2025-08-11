@@ -109,6 +109,7 @@ def register() -> None:
     _add_directive("list-table", tables.ListTable, raw=False)
     _add_directive("csv-table", tables.CSVTable, raw=False)
     _add_directive("rst-table", tables.RSTTable, raw=False)
+    _add_directive("table", tables.RSTTable, raw=False)
     _add_directive("rst-class", misc.Class)
     _add_directive("math", body.MathBlock)
     _add_directive("meta", misc.Meta)
