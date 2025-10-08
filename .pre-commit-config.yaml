@@ -1,6 +1,6 @@
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: check-added-large-files
       - id: check-executables-have-shebangs
@@ -24,7 +24,7 @@ repos:
         files: ^(.*\.toml)$
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.12.3
+    rev: v0.12.11
     hooks:
       - id: ruff
         args: [ --exit-non-zero-on-fix, --fix ]
@@ -34,8 +34,3 @@ repos:
     hooks:
       - id: black
     rev: 25.1.0
-
-  - repo: https://github.com/LilSpazJoekp/docstrfmt
-    hooks:
-      - id: docstrfmt
-    rev: v1.10.0

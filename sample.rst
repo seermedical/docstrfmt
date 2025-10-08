@@ -37,6 +37,25 @@ Vestibulum vitae gravida lorem, vel laoreet lorem.
     semper fringilla vel non mauris. In elementum viverra arcu sed commodo. In hac
     habitasse platea dictumst. Integer posuere ullamcorper eros ac gravida.
 
+Footnotes
+"""""""""
+
+A this is a [footnote]_.
+
+This primer introduces the most common features of reStructuredText, but there are a lot
+more to explore. The user reference is the place to go [1]_ or here [2]_. This is a
+footnote with an auto-generated number [#]_.
+
+.. [footnote] This is a footnote.
+
+.. [1] If that relative link doesn't work, try the master document:
+    http://docutils.sourceforge.net/docs/ref/rst/restructuredtext.html.
+
+.. [2] If that relative link doesn't work, try the master document:
+
+.. [#] This is a footnote with an auto-generated number.
+    http://docutils.sourceforge.net/docs/ref/rst/restructuredtext.html.
+
 Wrapping
 --------
 
@@ -50,16 +69,14 @@ vitae gravida lorem, vel laoreet lorem.
 Indentation
 -----------
 
-All indentation is done three spaces at a time. This may look a bit odd for bulleted
+All indentation is done four spaces at a time. This may look a bit odd for bulleted
 lists in isolation, but it makes everything consistent.
 
 .. note::
 
     - Thing 1
-
-      1. Thing 2
-      2. Thing 3
-
+          1. Thing 2
+          2. Thing 3
     - term
           definition
 
@@ -184,3 +201,10 @@ Lorem ipsum text provided by https://www.lipsum.com.
 .. _black: https://github.com/psf/black
 
 .. _gofmt: https://blog.golang.org/gofmt
+
+Foo
+---
+
+A footnote [#f1]_.
+
+.. [#f1] Check out some stuff here.
