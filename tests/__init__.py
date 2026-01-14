@@ -5,7 +5,7 @@ import docutils.nodes
 
 
 def iter_descendants(node):
-    for c in node.children:
+    for c in node.children:  # pragma: no cover
         yield c
         yield from iter_descendants(c)
 
@@ -36,11 +36,11 @@ def node_eq(node1, node2):
             t1 = t2 = object()
             try:
                 t1 = black.format_str(text_contents(node1), mode=black.FileMode())
-            except black.InvalidInput:  # pragma: no cover
+            except Exception:  # pragma: no cover
                 pass
             try:
                 t2 = black.format_str(text_contents(node2), mode=black.FileMode())
-            except black.InvalidInput:  # pragma: no cover
+            except Exception:  # pragma: no cover
                 pass
             return bool(t1 == t2)
 

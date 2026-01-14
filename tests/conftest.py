@@ -5,11 +5,14 @@ import shutil
 
 import black
 import pytest
+import logging
 from aiohttp import web
 from click.testing import CliRunner
 
 from docstrfmt import Manager
 from docstrfmt.server import handler
+
+log = logging.getLogger(__name__)
 
 
 @pytest.fixture
@@ -21,8 +24,7 @@ async def client(aiohttp_client):
 
 @pytest.fixture
 def manager():
-    manager = Manager(None, black.Mode())
-    yield manager
+    yield Manager(current_file="<test_file>", black_config=black.Mode(), reporter=log)
 
 
 @pytest.fixture

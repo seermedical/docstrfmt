@@ -1,19 +1,63 @@
-Change Log
-==========
+############
+ Change Log
+############
 
-Unreleased
-----------
+************
+ Unreleased
+************
 
-1.11.1 (2025/08/26)
--------------------
+********************
+ 2.0.1 (2025/12/27)
+********************
+
+**Fixed**
+
+- Fixed formatting of Python code blocks with continuation lines in docstrings.
+
+********************
+ 2.0.0 (2025/11/20)
+********************
+
+**Added**
+
+- Added support for Python 3.14.
+- Added ability to skip formatting Python code blocks with the
+  ``--format-python-code-blocks/--no-format-python-code-blocks`` or ``-N`` command-line
+  argument.
+- Added command-line option ``--section-adornments`` or ``-s`` to control section header
+  adornments.
+- Added command-line argument ``--preserve-adornments`` or ``-pA`` to preserve
+  user-defined section adornments.
+
+**Changed**
+
+- Changed default section heading adornments to match the ones described at
+  https://devguide.python.org/documentation/markup/#sections.
+
+**Fixed**
+
+- Fixed line length resolution order. The order is now: 1. Command line argument 2.
+  ``pyproject.toml`` setting 3. Black config setting 4. Default of 88
+- Image and Unicode substitution definitions were not being formatted correctly.
+- Files specified in pyproject are now parsed correctly.
+- Fixed issue when loading cache in certain environments.
+
+**Removed**
+
+- Removed support for Python 3.9.
+
+*********************
+ 1.11.1 (2025/08/26)
+*********************
 
 **Fixed**
 
 - Fixed an issue where footnotes were getting malformed when using auto-numbering.
 - Switch to package ``roman`` for roman numeral parsing.
 
-1.11.0 (2025/08/15)
--------------------
+*********************
+ 1.11.0 (2025/08/15)
+*********************
 
 **Added**
 
@@ -33,14 +77,15 @@ Unreleased
 
 - Fixed handling of "Title over/underline too short" warnings.
 - Fixed parsing of config options from ``pyproject.toml``.
-- Fixed peformance issues when executing from a directory with many files.
+- Fixed performance issues when executing from a directory with many files.
 
 **Removed**
 
 - Removed support for Python 3.8.
 
-1.10.0 (2025/02/25)
--------------------
+*********************
+ 1.10.0 (2025/02/25)
+*********************
 
 **Added**
 
@@ -56,8 +101,9 @@ Unreleased
   reported at once.
 - Fixed compatibility issue with Sphinx.
 
-1.9.0 (2024/08/26)
-------------------
+********************
+ 1.9.0 (2024/08/26)
+********************
 
 **Added**
 
@@ -73,8 +119,9 @@ Unreleased
 - Fix handling of ``.. code::`` blocks. They should now be correctly formatted to ``..
   code-block::``.
 
-1.8.0 (2024/07/28)
-------------------
+********************
+ 1.8.0 (2024/07/28)
+********************
 
 **Added**
 
@@ -86,8 +133,9 @@ Unreleased
 
 - Incorrect import of ``dataclass``.
 
-1.7.0 (2024/07/25)
-------------------
+********************
+ 1.7.0 (2024/07/25)
+********************
 
 **Added**
 
@@ -96,15 +144,17 @@ Unreleased
 - Added support for Sphinx metadata fields.
 - Added support for Sphinx Python directives.
 
-1.6.1 (2023/12/12)
-------------------
+********************
+ 1.6.1 (2023/12/12)
+********************
 
 **Fixed**
 
 - Fix incorrect blank line padding around ``:returns:`` and ``:raises:`` fields.
 
-1.6.0 (2023/12/10)
-------------------
+********************
+ 1.6.0 (2023/12/10)
+********************
 
 **Added**
 
@@ -128,15 +178,17 @@ Unreleased
 - Removed support for Python 3.6.
 - Removed support for Python 3.7.
 
-1.5.1 (2022/09/01)
-------------------
+********************
+ 1.5.1 (2022/09/01)
+********************
 
 **Fixed**
 
 - Fix ``ImportError`` when importing from black. Pinned black to 22.8.*.
 
-1.5.0 (2022/07/19)
-------------------
+********************
+ 1.5.0 (2022/07/19)
+********************
 
 **Added**
 
@@ -147,23 +199,26 @@ Unreleased
 - Fix ``AttributeError`` when accessing ``rawsource`` during the handling ``Text``
   nodes.
 
-1.4.4 (2022/02/06)
-------------------
+********************
+ 1.4.4 (2022/02/06)
+********************
 
 **Changed**
 
 - Bump maximum version of ``click`` from ``8.0.0`` to ``9.0.0``.
 - Bump minimum version of ``black`` to ``22``.
 
-1.4.3 (2021/11/19)
-------------------
+********************
+ 1.4.3 (2021/11/19)
+********************
 
 **Fixed**
 
 - An issue where docstrfmt would not properly find the ``pyproject.toml`` file.
 
-1.4.2 (2021/11/16)
-------------------
+********************
+ 1.4.2 (2021/11/16)
+********************
 
 **Changed**
 
@@ -173,37 +228,42 @@ Unreleased
 
 - An issue where the summary line of docstring was incorrectly wrapped.
 
-1.4.1 (2021/09/10)
-------------------
+********************
+ 1.4.1 (2021/09/10)
+********************
 
 **Added**
 
 - Add ``appdirs`` dependency.
 
-1.4.0 (2021/07/30)
-------------------
+********************
+ 1.4.0 (2021/07/30)
+********************
 
 **Added**
 
 - Add Pre-commit hooks.
 
-1.3.0 (2021/07/16)
-------------------
+********************
+ 1.3.0 (2021/07/16)
+********************
 
 **Added**
 
 - Add a check for blank fields and raise an error when found.
 - Add ``toml`` dependency.
 
-1.2.0 (2021/06/15)
-------------------
+********************
+ 1.2.0 (2021/06/15)
+********************
 
 **Added**
 
 - Add ability to specify config setting from ``pyproject.toml``.
 
-1.1.4 (2021/05/18)
-------------------
+********************
+ 1.1.4 (2021/05/18)
+********************
 
 **Changed**
 
@@ -213,8 +273,9 @@ Unreleased
 
 - Fix bug where exclude paths were not being excluded properly.
 
-1.1.3 (2021/05/10)
-------------------
+********************
+ 1.1.3 (2021/05/10)
+********************
 
 **Changed**
 
@@ -224,15 +285,17 @@ Unreleased
 
 - Fixed import error with sphinx>=4.0.0.
 
-1.1.2 (2021/05/04)
-------------------
+********************
+ 1.1.2 (2021/05/04)
+********************
 
 **Fixed**
 
 - Fixed issue when `target_version` is not set in `pyproject.toml`.
 
-1.1.1 (2021/05/04)
-------------------
+********************
+ 1.1.1 (2021/05/04)
+********************
 
 **Added**
 
@@ -246,16 +309,18 @@ Unreleased
 
 - Fixed import error when parsing black config.
 
-1.1.0 (2021/02/18)
-------------------
+********************
+ 1.1.0 (2021/02/18)
+********************
 
 - Make docstrfmt operate in parallel when processing more than 2 files similar to
   psf/black.
 - Added a caching mechanism similar to psf/black has so files that haven't changed from
   the last run won't be checked again.
 
-1.0.3 (2021/01/23)
-------------------
+********************
+ 1.0.3 (2021/01/23)
+********************
 
 **Added**
 
@@ -273,15 +338,17 @@ Unreleased
 - Bug where some raw docstrings were not being formatted.
 - Bug where some syntax errors in python blocks were not caught or raised correctly.
 
-1.0.2 (2020/12/27)
-------------------
+********************
+ 1.0.2 (2020/12/27)
+********************
 
 **Fixed**
 
 - Fix UnicodeEncodeError in Windows Github Actions jobs.
 
-1.0.1 (2020/12/27)
-------------------
+********************
+ 1.0.1 (2020/12/27)
+********************
 
 **Changed**
 
@@ -291,13 +358,15 @@ Unreleased
 
 - Fix encoding/decoding errors when opening files on Windows.
 
-1.0.0 (2020/12/26)
-------------------
+********************
+ 1.0.0 (2020/12/26)
+********************
 
 - First official docstrfmt release!
 
-1.0.0.pre0 (2020/12/26)
------------------------
+*************************
+ 1.0.0.pre0 (2020/12/26)
+*************************
 
 - Forked from `dzhu/rstfmt <https://github.com/dzhu/rstfmt>`_
 - Renamed to docstrfmt

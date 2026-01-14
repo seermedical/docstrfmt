@@ -37,7 +37,7 @@ class ExampleClass:
         self.test = "value"
         """Test attr docstring
 
-        .. thisdirectivedoesnotexit:: arguments but with white space
+        .. thisdirectivedoesnotexist:: arguments but with white space
             :field1: value1
             :field2: value2
             :field3:
@@ -121,6 +121,16 @@ class ExampleClass:
         3
         4
         >>> import this
+
+        >>> try:
+        ...     value = {1: 2}[3]
+        ... except KeyError:
+        ...     value = 4
+        ...
+        ... print(
+        ...     {"some long long long long long long long long long key to force line wrap": value}
+        ... )
+        {"some long long long long long long long long long key to force line wrap": value}
 
         """
         my_position, im_active = 1, True
