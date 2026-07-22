@@ -7,6 +7,79 @@
 ************
 
 ********************
+ 2.2.0 (2026/06/21)
+********************
+
+**Added**
+
+- Added command-line option ``--indent-width`` (4 as default) to control
+  spaces per indent level.
+- Added command-line option ``--keep-blanks`` to keep extra blank lines
+  between sections as they appear in source.
+- Added command-line option ``--ordered-marker``.
+  Default ``1`` keeps explicit numbering; ``#`` uses ``#`` auto-enumerator.
+
+**Fixed**
+
+- Fixed ``IndexError`` when checking attribute docstrings after ``enum.Enum`` members.
+- Fixed references containing a backslash or backtick being emitted unescaped.
+
+********************
+ 2.1.1 (2026/06/12)
+********************
+
+**Fixed**
+
+- Fixed bullet lists nested inside enumerated lists being rewritten as continuing
+  numeric enumerators (e.g. ``-`` items becoming ``2.``, ``3.``). The
+  ``current_ordinal`` from the outer enumerated list no longer leaks into nested
+  bullet lists.
+
+********************
+ 2.1.0 (2026/06/07)
+********************
+
+**Added**
+
+- Added command-line option ``--center-section-titles/--no-center-section-titles`` to
+  control whether section titles with overlines are centered with a leading space.
+- Added command-line option ``--bullet-list-marker`` or ``-b`` to configure the bullet
+  character used for unordered lists (``-``, ``*``, or ``+``). Defaults to ``-`` for
+  backward compatibility.
+
+**Changed**
+
+- Command-line options now take precedence over the corresponding ``pyproject.toml``
+  settings consistently; previously ``section-adornments`` set in ``pyproject.toml``
+  overrode an explicit ``--section-adornments``.
+
+**Fixed**
+
+- Fixed ``TypeError: main() missing 1 required positional argument: 'line_length'``
+  with click 8.4+ when ``--pyproject-config`` is given explicitly and the
+  configuration sets ``line-length``. Configuration values now flow through click's
+  default map instead of being written into ``context.params``.
+- Fixed handling of 'changes' directives (``deprecated``, ``versionadded``,
+  ``versionchanged``, and ``versionremoved``) and will now format the description text
+  within the content body of the directive.
+- Fixed an issue where ``:literal:`` roles were being replaced with literal formatting
+  (surrounded with ``) when the literal string ended with an escaped space or ``\n``.
+- Fixed stale cache hits when formatting options change: the file cache key now
+  incorporates every option that affects output (e.g., ``--section-adornments``,
+  ``--bullet-list-marker``), so files reformat instead of being skipped after such
+  options change.
+- Single-file invocations now use the file cache; previously only runs with two or more
+  files consulted and updated it.
+
+********************
+ 2.0.2 (2026/02/07)
+********************
+
+**Fixed**
+
+- Fixed resolving section adornments from pyproject.toml.
+
+********************
  2.0.1 (2025/12/27)
 ********************
 

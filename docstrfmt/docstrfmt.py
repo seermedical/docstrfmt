@@ -25,6 +25,7 @@ from docutils import nodes, utils
 from docutils.frontend import OptionParser
 from docutils.parsers import rst
 from docutils.parsers.rst import Directive, roles
+from docutils.statemachine import StringList
 from docutils.transforms import Transform
 from docutils.utils import new_document, unescape
 
@@ -167,7 +168,7 @@ class FormatContext:
         self.manager = manager
         self.black_config = black_config
         self.starting_width = width
-        self.bullet: str = ""
+        self.bullet: str = "-"
         self.column_widths = []
         self.current_ordinal = 0
         self.first_line_len: int = 0
@@ -338,6 +339,7 @@ class CodeFormatters:
 
         """
         manager = self.context.manager
+        manager.original_text = self.code
         try:
             document = manager.parse_string(
                 self.code, line_offset=manager.get_code_line(self.code) - 1
@@ -364,8 +366,13 @@ class Manager:
         *,
         current_file: Path | str,
         black_config: Mode | None = None,
+        center_section_titles: bool = True,
+        bullet_list_marker: str = "-",
         docstring_trailing_line: bool = True,
         format_python_code_blocks: bool = True,
+        indent_width: int = 4,
+        keep_blanks: bool = False,
+        ordered_marker: str = "1",
         reporter: Reporter | utils.Reporter | logging.Logger,
         section_adornments: list[tuple[str, bool]] | None = None,
     ):
@@ -374,14 +381,23 @@ class Manager:
         :param current_file: The current file being processed.
         :param reporter: utils.Reporter instance for logging.
         :param black_config: Black formatting configuration.
+        :param center_section_titles: Whether to center section titles with overlines
+            by adding a leading space.
+        :param bullet_list_marker: Bullet character to use for unordered lists.
         :param docstring_trailing_line: Whether to add trailing line to docstrings.
         :param format_python_code_blocks: Whether to format Python code blocks.
+        :param indent_width: Number of spaces per indentation level.
+        :param keep_blanks: Keep blank lines between sections as appear in source.
+        :param ordered_marker: Marker style for ordered (enumerated) lists, 1 or #.
         :param section_adornments: Section adornment configuration.
 
         """
         rst_extras.register()
         self.current_file = current_file
         self.black_config = black_config
+        self.center_section_titles = center_section_titles
+        self.bullet_list_marker = bullet_list_marker
+        self.ordered_marker = ordered_marker
         self.current_offset = 0
         self.error_count = 0
         self.reporter = reporter
@@ -395,6 +411,8 @@ class Manager:
         self.original_text = ""
         self.docstring_trailing_line = docstring_trailing_line
         self.format_python_code_blocks = format_python_code_blocks
+        self.indent_width = indent_width
+        self.keep_blanks = keep_blanks
         self._in_docstring = False  # for resolving line numbers in code blocks
         self.section_adornments = section_adornments
 
@@ -615,6 +633,8 @@ class Manager:
         input_lines = text.splitlines()
         self._pre_process(doc, line_offset, len(input_lines))
         self._register_adornments(input_lines, doc)
+        # Stash the source lines on the document for keep-blanks
+        doc.docstrfmt_source_lines = input_lines
         return doc
 
     def perform_format(
@@ -719,6 +739,97 @@ class Formatters:
             for index, child in enumerate(node.children)  # type: ignore[attr]
         )
 
+    def _block_top_line(self, node: nodes.Node, lines: list[str]) -> int | None:
+        """Return the 1-indexed source line where a block node starts.
+
+        For most nodes this is simply ``node.line``. Sections are special: their
+        ``line`` (the title's ``line``) points at the underline adornment, so we
+        back up over the title text and the optional overline. Directives are
+        special too: their ``line`` points past the directive (into or after the
+        content), so the directive instance's reliable ``lineno`` is used.
+
+        :param node: The node whose first source line is wanted.
+        :param lines: The source lines of the document being formatted.
+
+        :returns: The 1-indexed source line, or ``None`` if it can't be resolved.
+
+        """
+        if isinstance(node, nodes.section):
+            title = node.next_node(nodes.title)
+            title_line = getattr(title, "line", None) if title is not None else None
+            if title_line is None:
+                return None  # pragma: no cover
+            # ``title.line`` is the underline; the title text is the line above,
+            # and an optional overline is the line above that.
+            top = title_line - 1
+            if node.get("adornment-overline"):
+                top -= 1  # pragma: no cover
+            return top
+        if isinstance(node, rst_extras.directive):
+            inner = node.get("directive")
+            lineno = getattr(inner, "lineno", None)
+            if lineno:
+                return lineno
+        return getattr(node, "line", None)
+
+    def _blanks_before(self, node: nodes.Node) -> int | None:
+        """Count blank source lines immediately preceding a block node.
+
+        :param node: The node to look above.
+
+        :returns: The number of consecutive blank (empty or whitespace-only)
+            source lines directly above the node, or ``None`` if the source or
+            the node's position can't be determined.
+
+        """
+        lines = getattr(node.document, "docstrfmt_source_lines", None)
+        if lines is None:
+            return None  # pragma: no cover
+        top = self._block_top_line(node, lines)
+        if not top or top < 1:
+            return None  # pragma: no cover
+        count = 0
+        index = top - 1  # 1-indexed source line directly above ``top``
+        while 1 <= index <= len(lines) and not lines[index - 1].strip():
+            count += 1
+            index -= 1
+        return count
+
+    def _chain_children_keeping_blanks(
+        self,
+        node: nodes.Node,
+        context: FormatContext,
+        default_blanks: int = 1,
+    ) -> line_iterator:
+        """Format children, separating them with source-preserved blank lines.
+
+        When ``keep_blanks`` is disabled this behaves exactly like joining the
+        children with ``default_blanks`` blank lines between them. When enabled,
+        the number of blank lines found in the source between siblings is used
+        instead.
+
+        :param node: The parent node whose children to format.
+        :param context: Formatting context.
+        :param default_blanks: Blank lines to use between children when not
+            keeping source blanks (or when the source position is unknown).
+
+        :returns: Iterator of formatted lines.
+
+        """
+        for index, child in enumerate(node.children):  # type: ignore[attr-defined]
+            if index:
+                blanks = default_blanks
+                if self.manager.keep_blanks:
+                    found = self._blanks_before(child)
+                    if found is not None:
+                        # Only ever add blanks: never collapse below what the
+                        # formatter would normally place between siblings.
+                        blanks = max(default_blanks, found)
+                for _ in range(blanks):
+                    yield ""
+            child_context = context if index == 0 else context.wrap_first_at(0)
+            yield from self.manager.perform_format(child, child_context)
+
     def _generate_table_matrix(
         self,
         context: FormatContext,
@@ -779,16 +890,19 @@ class Formatters:
         :returns: Iterator of formatted list lines.
 
         """
+        children = node.children  # type: ignore[attr]
         sub_children = []
-        for child_index, child in enumerate(node.children, 1):  # type: ignore[attr]
-            sub_children.append(
-                list(self.manager.perform_format(child, context))
-                + (
-                    [""]
-                    if len(child.children) > 1 and len(node.children) != child_index  # type: ignore[attr]
-                    else []
-                )
-            )
+        for child_index, child in enumerate(children, 1):
+            item = list(self.manager.perform_format(child, context))
+            if child_index != len(children):
+                default = 1 if len(child.children) > 1 else 0  # type: ignore[attr]
+                if self.manager.keep_blanks:
+                    found = self._blanks_before(children[child_index])
+                    blanks = default if found is None else max(default, found)
+                else:
+                    blanks = default
+                item += [""] * blanks
+            sub_children.append(item)
 
         yield from chain(sub_children)
 
@@ -811,9 +925,12 @@ class Formatters:
         yield f".. {node.tagname}::"
         yield ""
         yield from _with_spaces(
-            4,
+            context.manager.indent_width,
             _chain_with_line_separator(
-                "", self._format_children(node, context.indent(4))
+                "",
+                self._format_children(
+                    node, context.indent(context.manager.indent_width)
+                ),
             ),
         )
 
@@ -840,9 +957,9 @@ class Formatters:
             f" {''.join(_wrap_text(None, chain(self._format_children(title, context)), context, node.line))}"
         )
         yield ""
-        context = context.indent(4)
+        context = context.indent(context.manager.indent_width)
         yield from _with_spaces(
-            4,
+            context.manager.indent_width,
             _chain_with_line_separator(
                 "",
                 (
@@ -874,9 +991,12 @@ class Formatters:
 
         """
         yield from _with_spaces(
-            4,
+            context.manager.indent_width,
             _chain_with_line_separator(
-                "", self._format_children(node, context.indent(4))
+                "",
+                self._format_children(
+                    node, context.indent(context.manager.indent_width)
+                ),
             ),
         )
 
@@ -901,7 +1021,10 @@ class Formatters:
             - Third item
 
         """
-        yield from self._list(node, context.with_bullet("-"))
+        yield from self._list(
+            node,
+            context.with_bullet(context.manager.bullet_list_marker).with_ordinal(0),
+        )
 
     def comment(
         self,
@@ -928,7 +1051,7 @@ class Formatters:
         yield ".."
         if node.children:
             text = "\n".join(chain(self._format_children(node, context)))
-            yield from _with_spaces(4, text.splitlines())
+            yield from _with_spaces(context.manager.indent_width, text.splitlines())
 
     def definition(
         self,
@@ -987,7 +1110,10 @@ class Formatters:
                 yield from self.manager.perform_format(child, context)
             elif isinstance(child, nodes.definition):
                 yield from _with_spaces(
-                    4, self.manager.perform_format(child, context.indent(4))
+                    context.manager.indent_width,
+                    self.manager.perform_format(
+                        child, context.indent(context.manager.indent_width)
+                    ),
                 )
 
     def directive(
@@ -1008,6 +1134,18 @@ class Formatters:
         directive = attributes["directive"]
         is_code_block = directive.name in ["code", "code-block", "sourcecode"]
         in_substitution = isinstance(node.parent, nodes.substitution_definition)
+        if (
+            directive.name
+            in ["deprecated", "versionadded", "versionchanged", "versionremoved"]
+            and len(directive.arguments) > 1
+        ):
+            # These directives have a required argument that we want to preserve, but
+            # the content is just a normal paragraph that we can format like usual.
+            # If there is more than 1 argument, then those need to be moved to the
+            # content attribute.
+            directive.content = StringList(directive.arguments[1:])
+            directive.arguments = directive.arguments[:1]
+
         parts = [
             f".. {'code-block' if is_code_block else directive.name}::",
             *directive.arguments,
@@ -1017,7 +1155,7 @@ class Formatters:
 
         yield " ".join(parts)
         # Just rely on the order being stable, hopefully.
-        leading_space = "" if in_substitution else " " * 4
+        leading_space = "" if in_substitution else " " * context.manager.indent_width
         for k, v in directive.options.items():
             yield f"{leading_space}:{k}:" if v is None else f"{leading_space}:{k}: {v}"
 
@@ -1031,9 +1169,11 @@ class Formatters:
                 except (AttributeError, TypeError):
                     pass
             yield ""
-            yield from _with_spaces(4, text.splitlines())
+            yield from _with_spaces(context.manager.indent_width, text.splitlines())
         elif directive.raw:
-            yield from _prepend_if_any("", _with_spaces(4, directive.content))
+            yield from _prepend_if_any(
+                "", _with_spaces(context.manager.indent_width, directive.content)
+            )
         else:
             sub_doc = self.manager.parse_string(
                 "\n".join(directive.content),
@@ -1043,7 +1183,10 @@ class Formatters:
             if sub_doc.children:
                 yield ""
                 yield from _with_spaces(
-                    4, self.manager.perform_format(sub_doc, context.indent(4))
+                    context.manager.indent_width,
+                    self.manager.perform_format(
+                        sub_doc, context.indent(context.manager.indent_width)
+                    ),
                 )
 
     def doctest_block(
@@ -1108,7 +1251,7 @@ class Formatters:
             The entire document content.
 
         """
-        yield from _chain_with_line_separator("", self._format_children(node, context))
+        yield from self._chain_children_keeping_blanks(node, context)
 
     def emphasis(
         self,
@@ -1145,11 +1288,17 @@ class Formatters:
             3. Third item
 
         """
+        start = node.attributes.get("start", 1)
+        enumtype = node.attributes["enumtype"]
+        if (
+            context.manager.ordered_marker == "#"
+            and enumtype == "arabic"
+            and start == 1
+        ):
+            enumtype = "#"
         yield from self._list(
             node,
-            context.with_ordinal(node.attributes.get("start", 1)).with_ordinal_format(
-                node.attributes["enumtype"]
-            ),
+            context.with_ordinal(start).with_ordinal_format(enumtype),
         )
         context.current_ordinal = 0
 
@@ -1212,7 +1361,7 @@ class Formatters:
                 children_processed.append(child)
         children = children_processed
         yield f"{field_name} {first_line}"
-        yield from _with_spaces(4, children)
+        yield from _with_spaces(context.manager.indent_width, children)
 
     def field_body(
         self,
@@ -1232,8 +1381,9 @@ class Formatters:
             "",
             self._format_children(
                 node,
-                context.indent(4).wrap_first_at(
-                    len(f":{node.parent.children[0].astext()}: ") - 4
+                context.indent(context.manager.indent_width).wrap_first_at(
+                    len(f":{node.parent.children[0].astext()}: ")
+                    - context.manager.indent_width
                 ),
             ),
         )
@@ -1437,9 +1587,19 @@ class Formatters:
         """
         prefix = ".."
         children = _wrap_text(
-            (context.width - 4 if context.width is not None else None),
-            chain(self._format_children(node, context.indent(4))),
-            context.wrap_first_at(len(prefix) - 4).indent(4),
+            (
+                context.width - context.manager.indent_width
+                if context.width is not None
+                else None
+            ),
+            chain(
+                self._format_children(
+                    node, context.indent(context.manager.indent_width)
+                )
+            ),
+            context.wrap_first_at(len(prefix) - context.manager.indent_width).indent(
+                context.manager.indent_width
+            ),
             node.line,
         )
         footnote_name = (
@@ -1451,7 +1611,7 @@ class Formatters:
         yield " ".join([prefix, *footnote_name, child])
         remaining = list(children)
         if remaining:
-            yield from _with_spaces(4, remaining)
+            yield from _with_spaces(context.manager.indent_width, remaining)
 
     citation = footnote
 
@@ -1527,7 +1687,7 @@ class Formatters:
             yield "|"
             return
 
-        indent = 4 * context.line_block_depth
+        indent = context.manager.indent_width * context.line_block_depth
         context = context.indent(indent)
         prefix1 = f"|{' ' * (indent - 1)}"
         prefix2 = " " * indent
@@ -1574,9 +1734,9 @@ class Formatters:
 
         """
         if not node.children:  # pragma: no cover
-            yield "-"  # no idea why this isn't covered anymore
+            yield context.bullet  # no idea why this isn't covered anymore
             return
-        if context.current_ordinal and context.bullet not in ["-", "*", "+"]:
+        if context.current_ordinal:
             context.bullet = make_enumerator(
                 context.current_ordinal, context.ordinal_format, ("", ".")
             )
@@ -1596,7 +1756,7 @@ class Formatters:
         node: nodes.literal,
         context: FormatContext,
     ) -> inline_iterator:
-        """Format a literal node.
+        r"""Format a literal node.
 
         Example:
 
@@ -1604,7 +1764,23 @@ class Formatters:
 
             This is ``literal`` text.
 
+        If the literal needs to end with a space:
+
+        .. code-block:: rst
+
+            This is a :literal:`literal with a trailing space \ ` that is not surrounded
+            with (``).
+
         """
+        if node.rawsource.startswith(":literal:") and node.rawsource.endswith(
+            (r"\ `", "\\\n`")
+        ):
+            # When the node ends with a backslash followed by a space or new line, don't
+            # remove the :literal: role and just return the node untouched. This is a
+            # workaround for specific edge cases in docutils.
+            yield inline_markup(node.rawsource)
+            return
+
         yield inline_markup(
             f"``{''.join(chain(self._format_children(node, context)))}``"
         )
@@ -1644,11 +1820,13 @@ class Formatters:
             except (AttributeError, TypeError):
                 pass
             yield ""
-            yield from _with_spaces(4, text.splitlines())
+            yield from _with_spaces(context.manager.indent_width, text.splitlines())
             return
         else:
             yield "::"
-        yield from _prepend_if_any("", _with_spaces(4, node.rawsource.splitlines()))
+        yield from _prepend_if_any(
+            "", _with_spaces(context.manager.indent_width, node.rawsource.splitlines())
+        )
 
     def paragraph(
         self,
@@ -1728,11 +1906,16 @@ class Formatters:
             :ref:`Link text <target>`
 
         """
+
+        # docutils delivers the title and target with backslash escapes already
+        # consumed, so any literal backslashes and backticks must be re-escaped
+        def escape(value: str) -> str:
+            return value.replace("\\", "\\\\").replace("`", r"\`")
+
         attributes = node.attributes
-        target = attributes["target"]
+        target = escape(attributes["target"])
         if attributes["has_explicit_title"]:
-            title = attributes["title"].replace("<", r"\<")
-            title = title.replace("`", r"\`")
+            title = escape(attributes["title"]).replace("<", r"\<")
             text = f"{title} <{target}>"
         else:
             text = target
@@ -1868,9 +2051,7 @@ class Formatters:
             Section content.
 
         """
-        yield from _chain_with_line_separator(
-            "", self._format_children(node, context.in_section())
-        )
+        yield from self._chain_children_keeping_blanks(node, context.in_section())
 
     def strong(
         self,
@@ -1915,19 +2096,33 @@ class Formatters:
             if _directive.options.get("alt") == node.attributes["names"][0]:
                 del _directive.options["alt"]
         if directive in ["image", "unicode"]:
-            children = chain(self._format_children(node, context.indent(4)))
+            children = chain(
+                self._format_children(
+                    node, context.indent(context.manager.indent_width)
+                )
+            )
         else:  # for date and replace
             children = _wrap_text(
-                (context.width - 4 if context.width is not None else None),
-                chain(self._format_children(node, context.indent(4))),
-                context.wrap_first_at(len(prefix) - 4).indent(4),
+                (
+                    context.width - context.manager.indent_width
+                    if context.width is not None
+                    else None
+                ),
+                chain(
+                    self._format_children(
+                        node, context.indent(context.manager.indent_width)
+                    )
+                ),
+                context.wrap_first_at(
+                    len(prefix) - context.manager.indent_width
+                ).indent(context.manager.indent_width),
                 node.line,
             )
         next_child = next(children)
         yield f"{prefix} {next_child}"
         remaining = list(children)
         if remaining:
-            yield from _with_spaces(4, remaining)
+            yield from _with_spaces(context.manager.indent_width, remaining)
 
     def substitution_reference(
         self,
@@ -2203,10 +2398,16 @@ class Formatters:
                 raise
 
         if overline:
-            # section headings with overline are centered
-            yield char * (2 + len(text))
-            yield " " + text
-            yield char * (2 + len(text))
+            if context.manager.center_section_titles:
+                # section headings with overline are centered
+                yield char * (2 + len(text))
+                yield " " + text
+                yield char * (2 + len(text))
+            else:
+                # section headings with overline are not centered
+                yield char * len(text)
+                yield text
+                yield char * len(text)
         else:
             # sections headings without overline are justified
             yield text

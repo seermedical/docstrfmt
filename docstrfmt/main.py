@@ -66,6 +66,11 @@ def _format_file(
     section_adornments: list[tuple[str, bool]] | None,
     raw_output: bool,
     lock: Lock | None,
+    bullet_list_marker: str = "-",
+    center_section_titles: bool = True,
+    indent_width: int = 4,
+    keep_blanks: bool = False,
+    ordered_marker: str = "1",
 ):
     """Format a single file with the given parameters.
 
@@ -80,6 +85,11 @@ def _format_file(
     :param section_adornments: Section adornment configuration.
     :param raw_output: Whether to output raw formatted text.
     :param lock: Lock for thread safety.
+    :param bullet_list_marker: Bullet character to use for unordered lists.
+    :param center_section_titles: Whether to center section titles with overlines.
+    :param indent_width: Number of spaces to use per indentation level.
+    :param keep_blanks: Keep blank lines between sections as appear in source.
+    :param ordered_marker: Marker style for ordered (enumerated) lists.
 
     :returns: A tuple containing a boolean indicating if the file was misformatted and
         the number of errors.
@@ -89,8 +99,13 @@ def _format_file(
     manager = Manager(
         current_file=file.name,
         black_config=mode,
+        bullet_list_marker=bullet_list_marker,
+        center_section_titles=center_section_titles,
         docstring_trailing_line=docstring_trailing_line,
         format_python_code_blocks=format_python_code_blocks,
+        indent_width=indent_width,
+        keep_blanks=keep_blanks,
+        ordered_marker=ordered_marker,
         reporter=reporter,
         section_adornments=section_adornments,
     )
@@ -181,14 +196,14 @@ def _parse_pyproject_config(
                 config_value = config.get(key)
                 if config_value is not None and not isinstance(config_value, list):
                     raise click.BadOptionUsage(key, f"Config key {key} must be a list")
-            params = {}
+            # Expose config values through the default map only; writing them
+            # directly into context.params conflicts with how click >=8.4
+            # arbitrates which parameter owns a value slot.
+            default_map = {}
             if context.default_map is not None:  # pragma: no cover
-                params.update(context.default_map)
-            if context.params is not None:
-                params.update(context.params)
-            params.update(config)
-            context.params = params
-            context.default_map = params
+                default_map.update(context.default_map)
+            default_map.update(config)
+            context.default_map = default_map
 
         black_config = parse_pyproject_toml(value)
         black_config.pop("exclude", None)
@@ -215,11 +230,21 @@ def _parse_sources(context: click.Context, _: click.Parameter, value: list[str] 
     :returns: List of resolved file paths to format.
 
     """
-    sources = value or context.params.get("files", [])
-    exclude = list(context.params.get("exclude", DEFAULT_EXCLUDE))
-    extend_exclude = list(context.params.get("extend_exclude", []))
+    default_map = context.default_map or {}
+
+    def lookup(name: str, fallback: Any) -> Any:
+        # Sibling parameters may not be processed yet when this callback runs,
+        # so fall back to the default map, which _parse_pyproject_config fills
+        # with pyproject.toml values.
+        if name in context.params:
+            return context.params[name]
+        return default_map.get(name, fallback)
+
+    sources = value or lookup("files", [])
+    exclude = list(lookup("exclude", DEFAULT_EXCLUDE))
+    extend_exclude = list(lookup("extend_exclude", []))
     exclude.extend(extend_exclude)
-    include_txt = context.params.get("include_txt", False)
+    include_txt = lookup("include_txt", False)
     files_to_format = set()
     extensions = [".py", ".rst"] + ([".txt"] if include_txt else [])
     for source in sources:
@@ -243,10 +268,7 @@ def _parse_sources(context: click.Context, _: click.Parameter, value: list[str] 
             if file.parent.match(exclusion) or file.match(exclusion):
                 files_to_format.discard(abspath(file))
                 break
-    sorted_files = sorted(files_to_format)
-    if context.params.get("files", []):
-        context.params["files"] = sorted_files
-    return sorted_files
+    return sorted(files_to_format)
 
 
 def _process_python(
@@ -359,20 +381,6 @@ def _process_rst(
     return misformatted, error_count
 
 
-def _resolve_length(context: click.Context, _: click.Parameter, value: int | None):
-    """Resolve line length from command line or pyproject.toml.
-
-    :param context: Click context containing command parameters.
-    :param _: Unused parameter.
-    :param value: Line length from command line.
-
-    :returns: Resolved line length value.
-
-    """
-    pyproject_line_length = context.params.pop("line_length", None)
-    return value or pyproject_line_length
-
-
 def _validate_adornments(
     context: click.Context, _: click.Parameter, value: str | None
 ) -> list[tuple[str, bool]] | None:
@@ -380,14 +388,14 @@ def _validate_adornments(
 
     :param context: Click context containing command parameters.
     :param _: Unused parameter.
-    :param value: Section adornments string from command line.
+    :param value: Section adornments string from the command line or pyproject.toml.
 
     :returns: List of tuples containing (character, has_overline) for each adornment.
 
     :raises click.BadParameter: If adornments are not unique.
 
     """
-    actual_value = value or context.params["section_adornments"]
+    actual_value = SECTION_CHARS if value is None else value
 
     if len(actual_value) != len(set(actual_value)):
         msg = "Section adornments must be unique"
@@ -395,11 +403,13 @@ def _validate_adornments(
 
     if "|" in actual_value:
         with_overline, without_overline = actual_value.split("|", 1)
-        return list(zip(with_overline, itertools.repeat(True))) + list(
+        adornments = list(zip(with_overline, itertools.repeat(True))) + list(
             zip(without_overline, itertools.repeat(False))
         )
+    else:
+        adornments = list(zip(actual_value, itertools.repeat(False)))
 
-    return list(zip(actual_value, itertools.repeat(False)))
+    return adornments
 
 
 async def _run_formatter(
@@ -416,6 +426,11 @@ async def _run_formatter(
     cache: FileCache,
     loop: asyncio.AbstractEventLoop,
     executor: ProcessPoolExecutor | ThreadPoolExecutor,
+    bullet_list_marker: str = "-",
+    center_section_titles: bool = True,
+    indent_width: int = 4,
+    keep_blanks: bool = False,
+    ordered_marker: str = "1",
 ):
     """Run the formatter on multiple files asynchronously.
 
@@ -432,6 +447,11 @@ async def _run_formatter(
     :param cache: File cache for tracking changes.
     :param loop: Event loop for async operations.
     :param executor: Process or thread pool executor.
+    :param bullet_list_marker: Bullet character to use for unordered lists.
+    :param center_section_titles: Whether to center section titles with overlines.
+    :param indent_width: Number of spaces per indentation level.
+    :param keep_blanks: Keep blank lines between sections as appear in source.
+    :param ordered_marker: Marker style for ordered (enumerated) lists.
 
     :returns: Tuple of (misformatted_files, total_error_count).
 
@@ -459,6 +479,11 @@ async def _run_formatter(
                 section_adornments,
                 raw_output,
                 lock,
+                bullet_list_marker,
+                center_section_titles,
+                indent_width,
+                keep_blanks,
+                ordered_marker,
             )
         ): file
         for file in sorted(todo)
@@ -487,8 +512,13 @@ async def _run_formatter(
                 if misformatted:
                     misformatted_files.add(file)
                 if (
-                    not (misformatted and raw_output) or (check and not misformatted)
-                ) and errors == 0:
+                    file.name != "-"  # stdin cannot be cached
+                    and (
+                        not (misformatted and raw_output)
+                        or (check and not misformatted)
+                    )
+                    and errors == 0
+                ):
                     files_to_cache.append(file)
     if cancelled:  # pragma: no cover
         await asyncio.gather(*cancelled, return_exceptions=True)
@@ -713,6 +743,16 @@ class Visitor(CSTTransformer):
                 break
         return node
 
+    @staticmethod
+    def _assign_target_name(node: AssignTarget) -> str | None:
+        """Return a display name for an attribute docstring target."""
+        target = node.target
+        if isinstance(target, cst.Name):
+            return target.value
+        if isinstance(target, cst.Attribute):
+            return target.attr.value
+        return None
+
     def leave_SimpleString(  # noqa: N802
         self, original_node: SimpleString, updated_node: SimpleString
     ) -> SimpleString:
@@ -727,8 +767,11 @@ class Visitor(CSTTransformer):
         if self._is_docstring(original_node):
             position_meta = self.get_metadata(PositionProvider, original_node)
             old_object_type = None
+            assigned_object_name = None
             if self._last_assign:
-                self._object_names.append(self._last_assign.target.children[2].value)  # type: ignore[attr]
+                assigned_object_name = self._assign_target_name(self._last_assign)
+                if assigned_object_name:
+                    self._object_names.append(assigned_object_name)
                 old_object_type = copy(self._object_type)
                 self._object_type = "attribute"
             indent_level = position_meta.start.column  # type: ignore[attr]
@@ -785,7 +828,8 @@ class Visitor(CSTTransformer):
                 updated_node = updated_node.with_changes(value=value)
             if self._last_assign:
                 self._last_assign = None
-                self._object_names.pop(-1)
+                if assigned_object_name:
+                    self._object_names.pop(-1)
                 self._object_type = old_object_type
         return self._escape_quoting(updated_node)
 
@@ -837,6 +881,23 @@ class Visitor(CSTTransformer):
 
 # noinspection PyUnusedLocal
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
+@click.option(
+    "-b",
+    "--bullet-list-marker",
+    default="-",
+    help="Bullet character to use for unordered lists.",
+    show_default=True,
+    type=click.Choice(["-", "*", "+"], case_sensitive=False),
+)
+@click.option(
+    "--center-section-titles/--no-center-section-titles",
+    default=True,
+    help=(
+        "Whether to center section titles with overlines by adding a leading space."
+        " When disabled, section titles with overlines will not have a leading space"
+        " and the adornment will match the exact length of the title text."
+    ),
+)
 @click.option(
     "-c",
     "--check",
@@ -899,6 +960,19 @@ class Visitor(CSTTransformer):
     is_flag=True,
 )
 @click.option(
+    "-w",
+    "--indent-width",
+    type=click.IntRange(3, 4),
+    default=4,
+    show_default=True,
+    help="Number of spaces per indentation level. Must be 3 or 4.",
+)
+@click.option(
+    "--keep-blanks",
+    help="Keep blank lines between sections as appear in source.",
+    is_flag=True,
+)
+@click.option(
     "-l",
     "--line-length",
     type=click.IntRange(4),
@@ -907,7 +981,16 @@ class Visitor(CSTTransformer):
         " 'line-length' set in pyproject.toml if set. Defaults to the length provided"
         " to black if not set."
     ),
-    callback=_resolve_length,
+)
+@click.option(
+    "--ordered-marker",
+    default="1",
+    help=(
+        "Marker style for ordered (enumerated) lists. '1' keeps the explicit"
+        " numbering; '#' uses the '#' auto-enumerator."
+    ),
+    show_default=True,
+    type=click.Choice(["1", "#"]),
 )
 @click.option(
     "-pA",
@@ -985,6 +1068,8 @@ class Visitor(CSTTransformer):
 @click.pass_context
 def main(
     context: Context,
+    bullet_list_marker: str,
+    center_section_titles: bool,
     check: bool,
     docstring_trailing_line: bool,
     exclude: list[str],
@@ -993,7 +1078,10 @@ def main(
     format_python_code_blocks: bool,
     ignore_cache: bool,
     include_txt: bool,
+    indent_width: int,
+    keep_blanks: bool,
     line_length: int,
+    ordered_marker: str,
     preserve_adornments: bool,
     mode: Mode,
     quiet: bool,
@@ -1006,6 +1094,8 @@ def main(
     """Format reStructuredText and Python files.
 
     :param context: Click context containing command parameters.
+    :param bullet_list_marker: Bullet character to use for unordered lists.
+    :param center_section_titles: Whether to center section titles with overlines.
     :param check: Whether to check formatting without modifying files.
     :param docstring_trailing_line: Whether to add trailing line to docstrings.
     :param exclude: List of paths to exclude from formatting.
@@ -1014,7 +1104,10 @@ def main(
     :param format_python_code_blocks: Whether to format Python code blocks.
     :param ignore_cache: Whether to ignore the cache.
     :param include_txt: Whether to include .txt files.
+    :param indent_width: Number of spaces per indentation level.
+    :param keep_blanks: Keep blank lines between sections as appear in source.
     :param line_length: Maximum line length.
+    :param ordered_marker: Marker style for ordered (enumerated) lists.
     :param preserve_adornments: Whether to preserve existing section adornments.
     :param mode: Black formatting mode.
     :param quiet: Whether to suppress non-error output.
@@ -1048,8 +1141,13 @@ def main(
         manager = Manager(
             current_file=file,
             black_config=mode,
+            bullet_list_marker=bullet_list_marker,
+            center_section_titles=center_section_titles,
             docstring_trailing_line=docstring_trailing_line,
             format_python_code_blocks=format_python_code_blocks,
+            indent_width=indent_width,
+            keep_blanks=keep_blanks,
+            ordered_marker=ordered_marker,
             reporter=reporter,
             section_adornments=section_adornments,
         )
@@ -1075,10 +1173,18 @@ def main(
 
     cache = FileCache(context, ignore_cache)
     if len(files) < 2:
-        for file in files:
+        if raw_output:
+            # Raw output must always be emitted, even for cached files.
+            todo = {Path(file).resolve() for file in files}
+        else:
+            todo, _already_done = cache.gen_todo_list(files)
+        files_to_cache = []
+        for file in (Path(f) for f in files):
+            if file.resolve() not in todo:
+                continue
             misformatted, error_count = _format_file(
                 check,
-                Path(file),
+                file,
                 file_type,
                 include_txt,
                 line_length,
@@ -1088,9 +1194,23 @@ def main(
                 section_adornments,
                 raw_output,
                 None,
+                bullet_list_marker,
+                center_section_titles,
+                indent_width,
+                keep_blanks,
+                ordered_marker,
             )
             if misformatted:
                 misformatted_files.add(file)
+            if (
+                file.name != "-"  # stdin cannot be cached
+                and not raw_output  # raw output does not modify the file
+                and not (check and misformatted)  # the file remains misformatted
+                and error_count == 0
+            ):
+                files_to_cache.append(file)
+        if files_to_cache:
+            cache.write_cache(files_to_cache)
 
     else:
         # This code is heavily based on that of psf/black
@@ -1124,6 +1244,11 @@ def main(
                     cache,
                     loop,
                     executor,
+                    bullet_list_marker,
+                    center_section_titles,
+                    indent_width,
+                    keep_blanks,
+                    ordered_marker,
                 )
             )
         finally:

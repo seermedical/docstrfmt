@@ -46,6 +46,34 @@ def test_call(file):
 
 
 @pytest.mark.parametrize(
+    "file,expected",
+    [
+        (
+            ".. deprecated:: 1.0 This was deprecated in version 1.0.",
+            ".. deprecated:: 1.0\n\n    This was deprecated in version 1.0.\n",
+        ),
+        (
+            ".. versionadded:: 1.0 This was added in version 1.0.",
+            ".. versionadded:: 1.0\n\n    This was added in version 1.0.\n",
+        ),
+        (
+            ".. versionchanged:: 1.0 This was changed in version 1.0.",
+            ".. versionchanged:: 1.0\n\n    This was changed in version 1.0.\n",
+        ),
+        (
+            ".. versionremoved:: 1.0 This was removed in version 1.0.",
+            ".. versionremoved:: 1.0\n\n    This was removed in version 1.0.\n",
+        ),
+    ],
+)
+def test_changes(runner, file, expected):
+    args = ["-"]
+    result = runner.invoke(main, args=args, input=file)
+    assert result.exit_code == 0
+    assert result.output == expected
+
+
+@pytest.mark.parametrize(
     "file", ["tests/test_files/test_file.rst", "tests/test_files/py_file.py"]
 )
 def test_check(runner, file):
@@ -94,12 +122,278 @@ def test_docstring_trailing_line(runner, flag):
         )
 
 
+def test_python_attribute_docstring_after_enum_member(runner):
+    file = '''
+              import enum
+
+              class TestStrEnum(enum.Enum):
+                  """Documentation for this type."""
+
+                  FOO = enum.auto()
+                  """Documentation for the FOO."""
+           '''
+
+    file = textwrap.dedent(file).lstrip()
+    ast.parse(file)  # check if input is valid Python code
+    args = ["-t", "py", "-r", file]
+    result = runner.invoke(main, args=args)
+    assert result.exit_code == 0
+    assert result.output == file
+
+
+def test_python_docstring_after_tuple_assignment(runner):
+    file = '''
+              A, B = (1, 2)
+              """Documentation for two names."""
+           '''
+
+    file = textwrap.dedent(file).lstrip()
+    ast.parse(file)  # check if input is valid Python code
+    args = ["-t", "py", "-r", file]
+    result = runner.invoke(main, args=args)
+    assert result.exit_code == 0
+    assert result.output == file
+
+
+def test_python_docstring_after_attribute_assignment(runner):
+    file = '''
+              class Example:
+                  def method(self):
+                      self.value = 1
+                      """Documentation for value."""
+           '''
+
+    file = textwrap.dedent(file).lstrip()
+    ast.parse(file)  # check if input is valid Python code
+    args = ["-t", "py", "-r", file]
+    result = runner.invoke(main, args=args)
+    assert result.exit_code == 0
+    assert result.output == file
+
+
+@pytest.mark.parametrize("marker", ["-", "*"])
+def test_bullet_list_marker(runner, marker):
+    bullet_input = "* item one\n* item two\n* item three\n"
+    args = ["-b", marker, "-"]
+    result = runner.invoke(main, args=args, input=bullet_input)
+    assert result.exit_code == 0
+    expected = f"{marker} item one\n{marker} item two\n{marker} item three\n"
+    assert result.output == expected
+
+
+def test_bullet_list_marker_default(runner):
+    bullet_input = "* item one\n* item two\n"
+    args = ["-"]
+    result = runner.invoke(main, args=args, input=bullet_input)
+    assert result.exit_code == 0
+    assert result.output == "- item one\n- item two\n"
+
+
+def test_ordered_marker_hash_rewrites_numbers(runner):
+    """With "--ordered-marker #" a plain arabic list starting at 1 is rewritten to
+    use the "#" auto-enumerator, and an existing "#" list is kept as-is."""
+    result = runner.invoke(
+        main, args=["--ordered-marker", "#", "-"], input="1. Foo\n2. Bar\n"
+    )
+    assert result.exit_code == 0
+    assert result.output == "#. Foo\n#. Bar\n"
+
+    kept = runner.invoke(
+        main, args=["--ordered-marker", "#", "-"], input="#. One\n#. Two\n"
+    )
+    assert kept.exit_code == 0
+    assert kept.output == "#. One\n#. Two\n"
+
+
+def test_ordered_marker_hash_preserves_non_default_lists(runner):
+    """A "#" auto-enumerator always restarts at 1, so lists that cannot be
+    reproduced by it (a non-1 start, or a lettered sequence) keep their markers."""
+    non_one_start = runner.invoke(
+        main, args=["--ordered-marker", "#", "-"], input="3. Foo\n4. Bar\n"
+    )
+    assert non_one_start.exit_code == 0
+    assert non_one_start.output == "3. Foo\n4. Bar\n"
+
+    lettered = runner.invoke(
+        main, args=["--ordered-marker", "#", "-"], input="a. Foo\nb. Bar\n"
+    )
+    assert lettered.exit_code == 0
+    assert lettered.output == "a. Foo\nb. Bar\n"
+
+
+@pytest.mark.parametrize("width", [3, 4])
+def test_indent_width(runner, width):
+    # A directive body, a definition list, and a directive option all use the
+    # configured indentation level.
+    source = (
+        ".. note::\n"
+        "\n"
+        "      Some note text.\n"
+        "\n"
+        "Term\n"
+        "      Definition body.\n"
+        "\n"
+        ".. image:: foo.png\n"
+        "      :alt: alt text\n"
+    )
+    args = ["--indent-width", width, "-"]
+    result = runner.invoke(main, args=args, input=source)
+    assert result.exit_code == 0
+    indent = " " * width
+    expected = (
+        ".. note::\n"
+        "\n"
+        f"{indent}Some note text.\n"
+        "\n"
+        "Term\n"
+        f"{indent}Definition body.\n"
+        "\n"
+        ".. image:: foo.png\n"
+        f"{indent}:alt: alt text\n"
+    )
+    assert result.output == expected
+
+
+def test_indent_width_short_flag(runner):
+    source = ".. note::\n\n      Some note text.\n"
+    result = runner.invoke(main, args=["-w", 3, "-"], input=source)
+    assert result.exit_code == 0
+    assert result.output == ".. note::\n\n   Some note text.\n"
+
+
+def test_indent_width_default(runner):
+    # Without the option the default indentation level is 4 spaces.
+    source = ".. note::\n\n      Some note text.\n"
+    result = runner.invoke(main, args=["-"], input=source)
+    assert result.exit_code == 0
+    assert result.output == ".. note::\n\n    Some note text.\n"
+
+
+def test_keep_blanks_between_list_items(runner):
+    # Without the option, blank lines between list items are collapsed.
+    source = "- bullet\n\n- bullet\n"
+    assert runner.invoke(main, args=["-"], input=source).output == (
+        "- bullet\n- bullet\n"
+    )
+    result = runner.invoke(main, args=["--keep-blanks", "-"], input=source)
+    assert result.exit_code == 0
+    assert result.output == source
+
+
+def test_keep_blanks_between_enumerated_items(runner):
+    source = "1. one\n\n2. two\n"
+    assert runner.invoke(main, args=["-"], input=source).output == "1. one\n2. two\n"
+    result = runner.invoke(main, args=["--keep-blanks", "-"], input=source)
+    assert result.exit_code == 0
+    assert result.output == source
+
+
+def test_keep_blanks_multiple_blanks_before_section(runner):
+    # Multiple blank lines before a section are normally collapsed to one but
+    # are preserved with --keep-blanks.
+    source = "text\n\n\nHeader\n======\n"
+    args = ["--keep-blanks", "-pA", "--no-center-section-titles", "-"]
+    assert runner.invoke(
+        main, args=["-pA", "--no-center-section-titles", "-"], input=source
+    ).output == ("text\n\nHeader\n======\n")
+    result = runner.invoke(main, args=args, input=source)
+    assert result.exit_code == 0
+    assert result.output == source
+
+
+def test_keep_blanks_only_adds_blanks(runner):
+    # --keep-blanks must never collapse blank lines below what the default
+    # formatter produces between sibling blocks.
+    source = "Header\n======\n\n.. note::\n\n    A note.\n\nTail.\n"
+    args = ["-pA", "--no-center-section-titles", "-"]
+    default = runner.invoke(main, args=args, input=source).output
+    kept = runner.invoke(main, args=["--keep-blanks", *args], input=source).output
+    assert kept == default
+
+
+def test_keep_blanks_only_adds_blanks(runner):
+    # --keep-blanks must never collapse blank lines below what the default
+    # formatter produces between sibling blocks.
+    source = ".. option:: BS\n\n   .. TODO\n\n   Warns\n\n.. option:: CA\n"
+    args = ["-pA", "-"]
+    default = runner.invoke(main, args=args, input=source).output
+    kept = runner.invoke(main, args=["--keep-blanks", *args], input=source).output
+    assert kept == default
+
+
+def test_keep_blanks_between_directives(runner):
+    # Extra blank lines between a directive (with a body) and a following block.
+    source = ".. option:: head\n\n   text\n\n\n.. option: more\n"
+    assert runner.invoke(main, args=["-"], input=source).output == (
+        ".. option:: head\n\n    text\n\n.. option: more\n"
+    )
+    result = runner.invoke(main, args=["--keep-blanks", "-"], input=source)
+    assert result.exit_code == 0
+    assert result.output == ".. option:: head\n\n    text\n\n\n.. option: more\n"
+
+
+def test_keep_blanks_default(runner):
+    # Without the option, blank lines between list items are not preserved.
+    source = "- a\n\n- b\n"
+    result = runner.invoke(main, args=["-"], input=source)
+    assert result.exit_code == 0
+    assert result.output == "- a\n- b\n"
+
+
+def test_nested_bullet_in_enumerated_list_preserves_bullets(runner):
+    """A bullet list nested inside an enumerated list must stay bulleted.
+
+    Regression: previously the inherited ``current_ordinal`` from the outer
+    enumerated list leaked into the nested bullet list, causing each ``-``
+    item to be rewritten as a continuing numeric enumerator.
+    """
+    source = (
+        "1. First item\n"
+        "\n"
+        "   - Nested bullet a\n"
+        "   - Nested bullet b\n"
+        "\n"
+        "2. Second item\n"
+    )
+    result = runner.invoke(main, args=["-"], input=source)
+    assert result.exit_code == 0
+    assert result.output == source
+
+
+def test_nested_enumerated_in_bullet_list_restarts_each_item(runner):
+    """Enumerated lists nested under separate bullet items each restart at 1."""
+    source = (
+        "- First bullet\n"
+        "\n"
+        "  1. Nested enum\n"
+        "  2. Nested enum\n"
+        "\n"
+        "- Second bullet\n"
+        "\n"
+        "  1. Another nested enum\n"
+        "  2. Another nested enum\n"
+    )
+    result = runner.invoke(main, args=["-"], input=source)
+    assert result.exit_code == 0
+    assert result.output == source
+
+
 def test_encoding(runner):
     file = "tests/test_files/test_encoding.rst"
     args = [file]
     result = runner.invoke(main, args=args)
     assert result.exit_code == 0
     assert result.output == "1 file was checked.\nDone! 🎉\n"
+
+
+def test_ref_role_escapes_target(runner):
+    """Test escaped targets."""
+    source = (
+        "the :option:`\\`v`\n\nthe :option:`a\\`b <c\\`d>`\n\nthe :option:`a\\\\b`\n"
+    )
+    result = runner.invoke(main, args=["-"], input=source)
+    assert result.exit_code == 0
+    assert result.output == source
 
 
 def test_encoding_raw_input(runner):
@@ -280,7 +574,7 @@ def test_invalid_line_length(runner, file):
     assert result.exit_code == 2
     assert (
         result.output
-        == "Usage: main [OPTIONS] [FILES]...\nTry 'main -h' for help.\n\nError: Invalid"
+        == "Usage: main [OPTIONS] [FILES]...\nTry 'main --help' for help.\n\nError: Invalid"
         " value for '-l' / '--line-length': 3 is not in the range x>=4.\n"
     )
 
@@ -306,7 +600,7 @@ def test_invalid_pyproject_toml(runner):
     result = runner.invoke(main, args=args)
     assert result.exit_code == 2
     assert result.output == (
-        "Usage: main [OPTIONS] [FILES]...\nTry 'main -h' for help.\n\nError: Config"
+        "Usage: main [OPTIONS] [FILES]...\nTry 'main --help' for help.\n\nError: Config"
         " key extend_exclude must be a list\n"
     )
 
@@ -695,6 +989,47 @@ def test_cache(runner, file):
     assert result.output.endswith("was checked.\nDone! 🎉\n")
 
 
+def test_cache_invalidated_by_formatting_options(runner):
+    # Two files are used so that the parallel code path runs.
+    files = ["tests/test_files/test_file.rst", "tests/test_files/py_file.py"]
+    args = ["-l", 80, *files]
+    result = runner.invoke(main, args=args)
+    assert result.exit_code == 0
+    assert result.output.endswith("were reformatted.\nDone! 🎉\n")
+
+    result = runner.invoke(main, args=args)
+    assert result.exit_code == 0
+    assert result.output.endswith("was checked.\nDone! 🎉\n")
+
+    # Changing an option that affects output must invalidate the cache; the files
+    # need reformatting under the new section adornments.
+    result = runner.invoke(main, args=[*args, "-s", "|=-^\"'~+.`_:#*"])
+    assert result.exit_code == 0
+    assert result.output.endswith("were reformatted.\nDone! 🎉\n")
+
+
+def test_cache_single_file(runner):
+    file = "tests/test_files/test_file.rst"
+    args = ["-l", 80, file]
+    result = runner.invoke(main, args=args)
+    assert result.exit_code == 0
+    assert result.output.endswith("were reformatted.\nDone! 🎉\n")
+
+    # Corrupt the formatting while preserving mtime and size so that a cache hit
+    # is distinguishable from a re-process: only a cache hit skips the file.
+    stat = os.stat(file)
+    with open(file, encoding="utf-8") as f:
+        content = f.read()
+    assert "\n- " in content
+    with open(file, "w", encoding="utf-8") as f:
+        f.write(content.replace("\n- ", "\n* ", 1))
+    os.utime(file, (stat.st_atime, stat.st_mtime))
+
+    result = runner.invoke(main, args=["-c", *args])
+    assert result.exit_code == 0
+    assert result.output.endswith("was checked.\nDone! 🎉\n")
+
+
 def test_comment_preserve_single_line(runner):
     file = "..  A comment in a single line is not placed on the next one.\n"
     fixed = ".. A comment in a single line is not placed on the next one.\n"
@@ -932,6 +1267,99 @@ def test_section_reformatting_python_adornments(runner):
     assert result.output == fixed
 
 
+@pytest.mark.parametrize(
+    ("pyproject_toml_file", "fixed"),
+    [
+        (
+            "tests/test_files/pyproject-section-adornments.toml",
+            """
+            =====
+             One
+            =====
+
+            -----
+             Two
+            -----
+
+            Three
+            ~~~~~
+
+            Four
+            ++++
+
+            Five
+            ....
+
+            -----------
+             Two again
+            -----------
+
+            Some content.
+            """,
+        ),
+        (
+            "tests/test_files/pyproject-section-adornments_no_overline.toml",
+            """
+            One
+            ===
+
+            Two
+            ---
+
+            Three
+            ~~~~~
+
+            Four
+            ++++
+
+            Five
+            ....
+
+            Two again
+            ---------
+
+            Some content.
+            """,
+        ),
+    ],
+)
+def test_section_reformatting_adornments__from_pyproject(
+    runner, pyproject_toml_file, fixed
+):
+    file = """
+        #####
+         One
+        #####
+
+        *****
+         Two
+        *****
+
+        Three
+        =====
+
+        Four
+        ----
+
+        Five
+        ^^^^
+
+        ***********
+         Two again
+        ***********
+
+        Some content.
+
+    """
+
+    file = textwrap.dedent(file).lstrip()
+    fixed = textwrap.dedent(fixed).lstrip()
+    args = ["-p", pyproject_toml_file, "-r", file]
+    result = runner.invoke(main, args=args)
+    assert result.exit_code == 0
+    assert result.output == fixed
+
+
 def test_section_reformatting_python_preserve_adornments(runner):
     file = '''
     """This is an example python file."""
@@ -1067,6 +1495,84 @@ def test_section_reformatting_custom_adornments(runner):
     file = textwrap.dedent(file).lstrip()
     fixed = textwrap.dedent(fixed).lstrip()
     args = ["-s", '#*=-^"', "-r", file]
+    result = runner.invoke(main, args=args)
+    assert result.exit_code == 0
+    assert result.output == fixed
+
+
+def test_section_reformatting_center_titles(runner):
+    file = """
+              ###
+              One
+              ###
+
+              ***
+              Two
+              ***
+
+              Three
+              =====
+
+              Some content.
+           """
+
+    fixed = """
+              #####
+               One
+              #####
+
+              *****
+               Two
+              *****
+
+              Three
+              =====
+
+              Some content.
+            """
+
+    file = textwrap.dedent(file).lstrip()
+    fixed = textwrap.dedent(fixed).lstrip()
+    args = ["-r", file]
+    result = runner.invoke(main, args=args)
+    assert result.exit_code == 0
+    assert result.output == fixed
+
+
+def test_section_reformatting_no_center_titles(runner):
+    file = """
+              ###
+              One
+              ###
+
+              ***
+              Two
+              ***
+
+              Three
+              =====
+
+              Some content.
+           """
+
+    fixed = """
+              ###
+              One
+              ###
+
+              ***
+              Two
+              ***
+
+              Three
+              =====
+
+              Some content.
+            """
+
+    file = textwrap.dedent(file).lstrip()
+    fixed = textwrap.dedent(fixed).lstrip()
+    args = ["--no-center-section-titles", "-r", file]
     result = runner.invoke(main, args=args)
     assert result.exit_code == 0
     assert result.output == fixed
